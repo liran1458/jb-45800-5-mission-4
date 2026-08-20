@@ -8,8 +8,8 @@ from torchvision import datasets, transforms, models
 DATASET_PATH = "dataset"
 IMAGE_SIZE = 224
 BATCH_SIZE = 16
-EPOCHS = 10
-LEARNING_RATE = 0.001
+EPOCHS = 15
+LEARNING_RATE = 0.0001
 
 
 # --------------------
@@ -20,7 +20,6 @@ transform = transforms.Compose([
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
     transforms.ToTensor(),
 
-    # ResNet18 was originally trained with this normalization
     transforms.Normalize(
         mean=[0.485, 0.456, 0.406],
         std=[0.229, 0.224, 0.225]
@@ -48,11 +47,16 @@ print("Number of images:", len(full_dataset))
 
 torch.manual_seed(42)
 
-indices = torch.randperm(len(full_dataset)).tolist()
+indices = torch.randperm(
+    len(full_dataset)
+).tolist()
 
-train_size = int(0.8 * len(indices))
+train_size = int(
+    0.8 * len(indices)
+)
 
 train_indices = indices[:train_size]
+
 validation_indices = indices[train_size:]
 
 
@@ -67,8 +71,15 @@ validation_dataset = Subset(
 )
 
 
-print("Training images:", len(train_dataset))
-print("Validation images:", len(validation_dataset))
+print(
+    "Training images:",
+    len(train_dataset)
+)
+
+print(
+    "Validation images:",
+    len(validation_dataset)
+)
 
 
 # --------------------
@@ -99,12 +110,17 @@ model = models.resnet18(
 )
 
 
-# Freeze the pretrained layers
+# Freeze all pretrained layers
 for parameter in model.parameters():
     parameter.requires_grad = False
 
 
-# Replace the last layer
+# Unfreeze the last ResNet block
+for parameter in model.layer4.parameters():
+    parameter.requires_grad = True
+
+
+# Replace the final classification layer
 number_of_features = model.fc.in_features
 
 model.fc = nn.Linear(
@@ -119,8 +135,12 @@ model.fc = nn.Linear(
 
 loss_function = nn.CrossEntropyLoss()
 
+
 optimizer = torch.optim.Adam(
-    model.fc.parameters(),
+    filter(
+        lambda parameter: parameter.requires_grad,
+        model.parameters()
+    ),
     lr=LEARNING_RATE
 )
 
@@ -173,7 +193,9 @@ for epoch in range(EPOCHS):
 
             predictions = model(images)
 
-            predicted_classes = predictions.argmax(dim=1)
+            predicted_classes = predictions.argmax(
+                dim=1
+            )
 
             correct += (
                 predicted_classes == labels
@@ -182,7 +204,9 @@ for epoch in range(EPOCHS):
             total += labels.size(0)
 
 
-    accuracy = correct / total * 100
+    accuracy = (
+        correct / total
+    ) * 100
 
     average_loss = (
         total_loss / len(train_loader)
@@ -221,6 +245,7 @@ for epoch in range(EPOCHS):
 
 
 print()
+
 print(
     f"Best Validation Accuracy: "
     f"{best_accuracy:.2f}%"
