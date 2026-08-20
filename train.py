@@ -1,49 +1,79 @@
 import torch
 import torch.nn as nn
 
-from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, transforms
-
+from torch.utils.data import DataLoader, Subset
+from torchvision import datasets, transforms, models
 
 
 DATASET_PATH = "dataset"
-IMAGE_SIZE = 128
+IMAGE_SIZE = 224
 BATCH_SIZE = 16
 EPOCHS = 10
 LEARNING_RATE = 0.001
 
 
+# --------------------
+# Image transforms
+# --------------------
 
 transform = transforms.Compose([
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-    transforms.ToTensor()
+    transforms.ToTensor(),
+
+    # ResNet18 was originally trained with this normalization
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    )
 ])
 
-dataset = datasets.ImageFolder(
+
+# --------------------
+# Load dataset
+# --------------------
+
+full_dataset = datasets.ImageFolder(
     root=DATASET_PATH,
     transform=transform
 )
 
-print("Classes:", dataset.classes)
-print("Number of classes:", len(dataset.classes))
-print("Number of images:", len(dataset))
+print("Classes:", full_dataset.classes)
+print("Number of classes:", len(full_dataset.classes))
+print("Number of images:", len(full_dataset))
 
 
+# --------------------
+# Train / validation split
+# --------------------
 
 torch.manual_seed(42)
 
-train_size = int(0.8 * len(dataset))
-validation_size = len(dataset) - train_size
+indices = torch.randperm(len(full_dataset)).tolist()
 
-train_dataset, validation_dataset = random_split(
-    dataset,
-    [train_size, validation_size]
+train_size = int(0.8 * len(indices))
+
+train_indices = indices[:train_size]
+validation_indices = indices[train_size:]
+
+
+train_dataset = Subset(
+    full_dataset,
+    train_indices
 )
+
+validation_dataset = Subset(
+    full_dataset,
+    validation_indices
+)
+
 
 print("Training images:", len(train_dataset))
 print("Validation images:", len(validation_dataset))
 
 
+# --------------------
+# DataLoaders
+# --------------------
 
 train_loader = DataLoader(
     train_dataset,
@@ -58,49 +88,48 @@ validation_loader = DataLoader(
 )
 
 
+# --------------------
+# ResNet18 model
+# --------------------
 
-class ChessCNN(nn.Module):
+weights = models.ResNet18_Weights.DEFAULT
 
-    def __init__(self, number_of_classes):
-        super().__init__()
-
-        self.network = nn.Sequential(
-
-            nn.Conv2d(3, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-
-            nn.Flatten(),
-
-            nn.Linear(64 * 16 * 16, 128),
-            nn.ReLU(),
-
-            nn.Linear(128, number_of_classes)
-        )
-
-    def forward(self, x):
-        return self.network(x)
+model = models.resnet18(
+    weights=weights
+)
 
 
-model = ChessCNN(len(dataset.classes))
+# Freeze the pretrained layers
+for parameter in model.parameters():
+    parameter.requires_grad = False
 
 
+# Replace the last layer
+number_of_features = model.fc.in_features
+
+model.fc = nn.Linear(
+    number_of_features,
+    len(full_dataset.classes)
+)
+
+
+# --------------------
+# Loss + optimizer
+# --------------------
 
 loss_function = nn.CrossEntropyLoss()
 
 optimizer = torch.optim.Adam(
-    model.parameters(),
+    model.fc.parameters(),
     lr=LEARNING_RATE
 )
 
+
+# --------------------
+# Training
+# --------------------
+
+best_accuracy = 0
 
 
 for epoch in range(EPOCHS):
@@ -109,13 +138,17 @@ for epoch in range(EPOCHS):
 
     total_loss = 0
 
+
     for images, labels in train_loader:
 
         optimizer.zero_grad()
 
         predictions = model(images)
 
-        loss = loss_function(predictions, labels)
+        loss = loss_function(
+            predictions,
+            labels
+        )
 
         loss.backward()
 
@@ -124,11 +157,15 @@ for epoch in range(EPOCHS):
         total_loss += loss.item()
 
 
+    # --------------------
+    # Validation
+    # --------------------
 
     model.eval()
 
     correct = 0
     total = 0
+
 
     with torch.no_grad():
 
@@ -138,12 +175,19 @@ for epoch in range(EPOCHS):
 
             predicted_classes = predictions.argmax(dim=1)
 
-            correct += (predicted_classes == labels).sum().item()
+            correct += (
+                predicted_classes == labels
+            ).sum().item()
+
             total += labels.size(0)
+
 
     accuracy = correct / total * 100
 
-    average_loss = total_loss / len(train_loader)
+    average_loss = (
+        total_loss / len(train_loader)
+    )
+
 
     print(
         f"Epoch {epoch + 1}/{EPOCHS} "
@@ -152,13 +196,32 @@ for epoch in range(EPOCHS):
     )
 
 
-torch.save(
-    {
-        "model_state_dict": model.state_dict(),
-        "classes": dataset.classes,
-        "image_size": IMAGE_SIZE
-    },
-    "model.pt"
-)
+    # --------------------
+    # Save best model
+    # --------------------
 
-print("Model saved to model.pt")
+    if accuracy > best_accuracy:
+
+        best_accuracy = accuracy
+
+        torch.save(
+            {
+                "model_state_dict": model.state_dict(),
+                "classes": full_dataset.classes,
+                "image_size": IMAGE_SIZE,
+                "architecture": "resnet18"
+            },
+            "model.pt"
+        )
+
+        print(
+            f"New best model saved - "
+            f"Accuracy: {best_accuracy:.2f}%"
+        )
+
+
+print()
+print(
+    f"Best Validation Accuracy: "
+    f"{best_accuracy:.2f}%"
+)
