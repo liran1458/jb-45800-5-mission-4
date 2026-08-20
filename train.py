@@ -6,6 +6,8 @@ from torchvision import datasets, transforms, models
 
 
 DATASET_PATH = "dataset"
+PRETRAINED_WEIGHTS_PATH = "pretrained/resnet18-f37072fd.pth"
+
 IMAGE_SIZE = 224
 BATCH_SIZE = 16
 EPOCHS = 15
@@ -56,7 +58,6 @@ train_size = int(
 )
 
 train_indices = indices[:train_size]
-
 validation_indices = indices[train_size:]
 
 
@@ -103,10 +104,21 @@ validation_loader = DataLoader(
 # ResNet18 model
 # --------------------
 
-weights = models.ResNet18_Weights.DEFAULT
-
+# Create ResNet18 without downloading anything
 model = models.resnet18(
-    weights=weights
+    weights=None
+)
+
+
+# Load pretrained ImageNet weights from the repository
+pretrained_weights = torch.load(
+    PRETRAINED_WEIGHTS_PATH,
+    map_location="cpu",
+    weights_only=True
+)
+
+model.load_state_dict(
+    pretrained_weights
 )
 
 
@@ -120,7 +132,8 @@ for parameter in model.layer4.parameters():
     parameter.requires_grad = True
 
 
-# Replace the final classification layer
+# Replace the original 1000-class output layer
+# with our 6 chess-piece classes
 number_of_features = model.fc.in_features
 
 model.fc = nn.Linear(
@@ -134,7 +147,6 @@ model.fc = nn.Linear(
 # --------------------
 
 loss_function = nn.CrossEntropyLoss()
-
 
 optimizer = torch.optim.Adam(
     filter(
